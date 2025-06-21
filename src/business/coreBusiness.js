@@ -1,73 +1,122 @@
-const ICoreBusiness = require('./interfaces/ICoreBusiness');
 const CriticalLevel = require('../models/enums/criticalLevel');
 
-class CoreBusiness extends ICoreBusiness {
+class CoreBusiness {
     constructor({ googleBusiness, netrisBusiness, log, config, args }) {
-        super();
         this.googleBusiness = googleBusiness;
         this.netrisBusiness = netrisBusiness;
         this.log = log;
         this.config = config;
-        this.businessId = parseInt(config.businessId);
-        this.args = args || [];
+        this.args = args;
 
-        if (this.args.length > 0) {
-            this.log.logMessage(CriticalLevel.Info, `Argumentos recebidos: ${this.args.join(', ')}`);
+        this.businessId = parseInt(config.businessId);
+
+        if (args && args.length > 0) {
+            this.log.logMessage(CriticalLevel.Normal, `Argumentos recebidos: ${args.join(', ')}`);
         } else {
-            this.log.logMessage(CriticalLevel.Info, 'Nenhum argumento foi recebido.');
+            this.log.logMessage(CriticalLevel.Normal, 'Nenhum argumento foi recebido.');
         }
     }
 
     async executeAsync() {
-        this.log.logMessage(CriticalLevel.Info, `Iniciando coleta de atendimentos para o BusinessId: ${this.businessId}`);
+        this.log.logMessage(
+            CriticalLevel.Normal,
+            `Iniciando coleta de atendimentos para o BusinessId: ${this.businessId}`
+        );
 
-        const rotina = this.args[0]?.toUpperCase() || '';
-        const active = this.config.features?.active ?? true;
-        const limiteRegister = this.config.features?.data?.limiteRegister ?? 100;
+        const tasks = [];
+        const rotina = this.args && this.args.length > 0 ? this.args[0].toUpperCase() : '';
+
+        const active = this.config.features.active;
+        const limiteRegister = this.config.features.data.limiteRegister;
 
         try {
             switch (rotina) {
                 case 'CARGA_MEDICOS':
-                    await this.executarCargaDeMedicos();
+                    tasks.push(
+                        (async () => {
+                            const listDoctors = await this.netrisBusiness.listarMedicosCedeco();
+                            const medicosInseridos = await this.netrisBusiness.insertIntoMedicoCedeco(listDoctors);
+
+                            if (medicosInseridos > 0) {
+                                this.log.logMessage(
+                                    CriticalLevel.Normal,
+                                    `Foram inseridos ${medicosInseridos} médicos na base de dados.`
+                                );
+                                process.exit(0);
+                            }
+                        })()
+                    );
                     break;
 
                 case 'MEDICO_LAUDADOR':
-                    await this.executarMedicoLaudador();
+                    tasks.push(
+                        (async () => {
+                            const listAtendimentos = await this.netrisBusiness.listAtendimentos();
+                            const listDoctors = await this.netrisBusiness.listarMedico();
+
+                            const limite = active ? limiteRegister : listAtendimentos.length;
+                            let count = 0;
+
+                            for (const atendimento of listAtendimentos) {
+                                if (count >= limite) break;
+
+                                const atendimentoEleito = await this.netrisBusiness.proximoMedico(atendimento, listDoctors);
+
+                                if (atendimentoEleito) {
+                                    const resultado = await this.netrisBusiness.inserirRegistroMedicoLaudador(atendimentoEleito);
+                                    if (resultado) {
+                                        this.log.logMessage(
+                                            CriticalLevel.Normal,
+                                            `Atendimento ${atendimentoEleito.idAtendimento} atribuído ao médico ${atendimentoEleito.idMedicoExecutorEleito} com sucesso.`
+                                        );
+                                    } else {
+                                        this.log.logMessage(
+                                            CriticalLevel.Warning,
+                                            `Falha ao atribuir o médico ao atendimento ${atendimentoEleito.idAtendimento}.`
+                                        );
+                                    }
+                                }
+
+                                count++;
+                            }
+
+                            process.exit(0);
+                        })()
+                    );
                     break;
 
                 default:
-                    this.log.logMessage(CriticalLevel.Warning, `Nenhuma rotina válida informada.`);
+                    this.log.logMessage(
+                        CriticalLevel.Warning,
+                        `Parâmetro '${rotina}' não reconhecido.`
+                    );
                     break;
             }
-
-            this.log.logMessage(CriticalLevel.Info, `Rotina concluída.`);
         } catch (error) {
-            this.log.logMessage(CriticalLevel.FatalError, `Erro na execução da rotina: ${error.message}`);
+            this.log.logMessage(
+                CriticalLevel.FatalError,
+                `Erro durante execução: ${error.message}`
+            );
+        }
+
+        await Promise.all(tasks);
+    }
+
+    async startAsync() {
+        try {
+            this.log.logMessage(CriticalLevel.Normal, 'Iniciando serviço CoreBusiness...');
+            await this.executeAsync();
+            this.log.logMessage(CriticalLevel.Normal, 'Serviço CoreBusiness concluído.');
+        } catch (error) {
+            this.log.logMessage(
+                CriticalLevel.FatalError,
+                `Erro ao iniciar o serviço: ${error.message}`
+            );
         }
     }
 
-    async executarCargaDeMedicos() {
-        this.log.logMessage(CriticalLevel.Info, `Executando rotina de carga de médicos.`);
-
-        const listDoctors = await this.netrisBusiness.listarMedicosCedeco();
-        let countInseridos = 0;
-
-        for (const medico of listDoctors) {
-            const sucesso = await this.netrisBusiness.insertIntoMedicoCedeco(medico);
-            if (sucesso) countInseridos++;
-        }
-
-        this.log.logMessage(CriticalLevel.Info, `Foram inseridos ${countInseridos} médicos na base de dados.`);
-    }
-
-    async executarMedicoLaudador() {
-        this.log.logMessage(CriticalLevel.Info, `Executando rotina de médicos laudadores.`);
-
-        const atendimentos = await this.netrisBusiness.listarAtendimentos();
-
-        this.log.logMessage(CriticalLevel.Info, `Foram encontrados ${atendimentos.length} atendimentos.`);
-
-        // Você pode aplicar aqui qualquer outra regra adicional
+    async stopAsync() {
+        this.log.logMessage(CriticalLevel.Normal, 'Parando serviço CoreBusiness...');
     }
 }
 
