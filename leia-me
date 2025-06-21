@@ -1,0 +1,10 @@
+[Parametros MediMonitor1]
+
+CARGA_MEDICOS → Carrega os médicos.
+MEDICO_LAUDADOR → Busca atendimentos e define médico laudador
+GOOGLE_PLANILHA → Simula leitura de planilha Google.
+
+
+
+[Planilha de controle de laudadores]
+https://docs.google.com/spreadsheets/d/1sR8sSmrdqvSNTyyTlIKMegRfiZGIbNDaee8BS6C9F1g/edit?gid=0#gid=0
